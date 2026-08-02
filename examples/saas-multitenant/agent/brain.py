@@ -28,7 +28,7 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Verificá el nombre exacto disponible en tu cuenta en aistudio.google.com —
 # Google libera modelos nuevos seguido y los nombres/versiones cambian.
-MODELO = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODELO = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 MAX_TURNOS_TOOL = 5
 
 

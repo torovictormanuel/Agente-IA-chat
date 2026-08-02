@@ -33,7 +33,7 @@ Cuando generes el agente, SIEMPRE usa estas tecnologías:
 |-----------|-----------|-------|
 | Runtime | Python 3.11+ | Verificar en Fase 1 |
 | Servidor | FastAPI + Uvicorn | Webhook handler genérico |
-| IA | Google Gemini (Interactions API) | Modelo: `gemini-2.5-flash` (configurable) |
+| IA | Google Gemini (Interactions API) | Modelo: `gemini-flash-latest` (configurable) |
 | WhatsApp | Meta Cloud API / Twilio | El usuario elige durante el setup |
 | Base de datos | SQLite (local) / PostgreSQL (prod) | Via SQLAlchemy |
 | Variables | python-dotenv | NUNCA hardcodear keys |
@@ -106,7 +106,7 @@ Memory (agent/memory.py) — recupera historial de esa conversación
     ↓
 Brain (agent/brain.py) — llama Gemini con: system prompt + historial + mensaje nuevo
     ↓
-Gemini (gemini-2.5-flash) — genera respuesta inteligente, decide si llamar tools
+Gemini (gemini-flash-latest) — genera respuesta inteligente, decide si llamar tools
     ↓
 Tools (agent/tools.py) — si necesita hacer algo (agendar, buscar, etc.)
     ↓
@@ -818,7 +818,7 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Verificá el nombre exacto disponible en tu cuenta en aistudio.google.com —
 # Google libera modelos nuevos seguido y los nombres/versiones cambian.
-MODELO = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODELO = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 
 MAX_TURNOS_TOOL = 5  # límite de idas y vueltas modelo <-> herramientas por mensaje
 
@@ -1627,7 +1627,7 @@ Claude Code genera SOLO las variables del proveedor elegido (no las de los otros
 GEMINI_API_KEY=...
 # Modelo: verificá el nombre exacto disponible en tu cuenta en
 # aistudio.google.com — Google libera modelos nuevos seguido
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-flash-latest
 
 # Proveedor de WhatsApp
 WHATSAPP_PROVIDER=  # meta | twilio
@@ -1826,7 +1826,7 @@ Solo ejecutar si el usuario confirma que quiere hacer deploy.
 
    Lo que se construyó:
    - Servidor FastAPI con webhook de WhatsApp
-   - Cerebro con Google Gemini (gemini-2.5-flash) con tool-calling
+   - Cerebro con Google Gemini (gemini-flash-latest) con tool-calling
    - Memoria de conversaciones por cliente
    - Herramientas: [LISTA DE HERRAMIENTAS]
    - System prompt personalizado para tu negocio
@@ -1891,7 +1891,7 @@ pip install -r requirements.txt
 ```env
 # Google Gemini
 GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-2.5-flash  # verificar nombre exacto en aistudio.google.com
+GEMINI_MODEL=gemini-flash-latest  # verificar nombre exacto en aistudio.google.com
 
 # Proveedor de WhatsApp (meta | twilio)
 WHATSAPP_PROVIDER=

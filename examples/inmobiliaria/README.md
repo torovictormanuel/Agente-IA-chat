@@ -22,7 +22,7 @@ completa de `/build-agent`, y como plantilla para adaptar a otro rubro.
 - Validación de firma de webhook para Twilio y Meta
 - Idempotencia: reintentos del proveedor no duplican respuestas
 - Motor de IA: **Google Gemini** vía la Interactions API (`GEMINI_MODEL`,
-  default `gemini-2.5-flash`) — tier gratis real sin tarjeta, ver `.env.example`
+  default `gemini-flash-latest`) — tier gratis real sin tarjeta, ver `.env.example`
 
 ## Probar en 3 pasos (sin WhatsApp)
 

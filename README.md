@@ -305,7 +305,7 @@ Para los curiosos, esto es lo que se usa por debajo:
 
 | Componente | Tecnologia | Para que sirve |
 |-----------|-----------|----------------|
-| IA | Google Gemini (gemini-2.5-flash, configurable via `GEMINI_MODEL`) | Genera las respuestas inteligentes, con tool-calling real |
+| IA | Google Gemini (gemini-flash-latest, configurable via `GEMINI_MODEL`) | Genera las respuestas inteligentes, con tool-calling real |
 | Servidor | FastAPI + Uvicorn | Recibe los webhooks de WhatsApp |
 | WhatsApp | Meta / Twilio | Conecta con WhatsApp (tu eliges) |
 | Base de datos | SQLite (local) / PostgreSQL (prod) | Guarda historial de conversaciones |
