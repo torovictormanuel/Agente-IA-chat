@@ -60,3 +60,71 @@ coloque aquí — Claude Code lo lee y lo incorpora al system prompt.
 
 * **Perfil:** Asesor inmobiliario profesional, empático, conocedor de la realidad económica local, claro y directo.
 * **Manejo de Dudas:** Al responder sobre costos, especificar siempre si los valores son en USD o Pesos Argentinos (ARS) y aclarar qué tipo de cotización o ajuste aplica cuando sea relevante.
+
+---
+
+## 5. FUENTES DE DATOS DE MERCADO EN TIEMPO REAL
+
+> **Nota de arquitectura:** por ahora estas fuentes quedan como contexto
+> estático (el agente las conoce y las puede mencionar, pero NO tiene
+> acceso en vivo a internet). La integración en tiempo real (consultar el
+> índice actualizado, buscar comparables reales) la va a resolver un
+> agente/servicio aparte más adelante — cuando esté listo, se conecta como
+> una tool nueva en `agent/tools.py` (ej. `consultar_precio_mercado()`),
+> sin tocar `brain.py` ni el resto del sistema.
+
+* **ZonaProp — ZP Index** ([zonaprop.com.ar/blog/zpindex](https://www.zonaprop.com.ar/blog/zpindex/)):
+  índice de precio promedio por m² segmentado por zona/barrio y tipo de
+  propiedad (monoambiente, 2 amb, 3 amb...), para CABA, GBA, Rosario y
+  Córdoba, tanto venta como alquiler, en USD/m² para CABA. Se actualiza
+  mensual/trimestral/anual. Es la referencia a usar cuando un cliente
+  pregunte si un precio "está en línea con el mercado" de una zona.
+* **ArgenProp, ZonaProp, MercadoLibre Inmuebles:** portales de referencia
+  para comparables (propiedades similares publicadas por terceros) — a
+  futuro complementan el catálogo propio (`config/propiedades.yaml`) para
+  responder "qué hay parecido en la zona" más allá del stock propio del
+  negocio.
+
+Si un cliente pregunta por precios de mercado o comparables y el agente no
+tiene esa tool todavía, debe decir que no tiene acceso a cotizaciones en
+vivo y ofrecer conectarlo con el equipo — nunca inventar un precio de
+mercado.
+
+---
+
+## 6. COSTOS DE ESCRITURACIÓN 2026 (Argentina)
+
+Referencia aproximada — varía por provincia, por escribano, y cambia con
+el tiempo. No dar un número cerrado como definitivo; aclarar que es
+orientativo y que el monto final se confirma con el escribano.
+
+* **Costo total aproximado para el comprador:** USD 5.000–6.000, ó ~5%-6%
+  del valor de la propiedad (incluye honorarios de escribano, sellos,
+  inscripción, aportes notariales y certificados)
+* **Honorarios de escribano:** 1%-1.5% del valor de la operación en la
+  mayoría de las provincias — son orientativos (el Colegio de Escribanos
+  publica tablas de referencia), el monto final se negocia con el
+  escribano; conviene pedir presupuesto cerrado antes de comprometerse
+* **Impuesto de Sellos:** impuesto provincial/CABA sobre el instrumento
+  legal; por norma se divide 50/50 entre comprador y vendedor. Varía por
+  jurisdicción — ej. Salta 2% total, Provincia de Buenos Aires 3.6% del
+  valor escriturado. CABA y PBA tienen exención parcial o total para
+  vivienda única y permanente por debajo de un tope de valor (se
+  actualiza periódicamente)
+* **ITI (Impuesto a la Transferencia de Inmuebles): DEROGADO** por la Ley
+  27.743 (Boletín Oficial, 8 de julio de 2024) — ya NO se paga. Si el
+  agente ve o recibe información vieja que todavía lo mencione como
+  vigente, no debe repetirla
+* **Quién elige a quién:** el comprador elige y paga a su propio
+  escribano; el vendedor puede designar el suyo, generalmente a ~50% del
+  honorario del comprador
+
+### Desglose de referencia (fuente: simulador comercial de Mudafy — orden de magnitud, no una tabla oficial)
+
+| Concepto | Comprador | Vendedor |
+|---|---|---|
+| Tarifa inmobiliaria | 4% | 3% |
+| Honorarios de escribanía | 2% (3.5% en primera escritura) | — |
+| Gastos de escrituración | — | 2% |
+| Sellos | 2.7%-3.5% (CABA), compartido | compartido |
+| Fondo de reserva (solo primera escritura) | hasta 6% del valor | — |
