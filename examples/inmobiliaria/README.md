@@ -21,8 +21,8 @@ completa de `/build-agent`, y como plantilla para adaptar a otro rubro.
   (`agent/brain.py`)
 - Validación de firma de webhook para Twilio y Meta
 - Idempotencia: reintentos del proveedor no duplican respuestas
-- Modelo configurable via `ANTHROPIC_MODEL` (Haiku para probar sin quemar
-  crédito, Sonnet para producción — ver `.env.example`)
+- Motor de IA: **Google Gemini** vía la Interactions API (`GEMINI_MODEL`,
+  default `gemini-2.5-flash`) — tier gratis real sin tarjeta, ver `.env.example`
 
 ## Probar en 3 pasos (sin WhatsApp)
 
@@ -31,7 +31,7 @@ cd examples/inmobiliaria
 python3 -m venv .venv && source .venv/bin/activate   # o .venv\Scripts\activate en Windows
 pip install -r requirements.txt
 cp .env.example .env
-# Edita .env y pon tu ANTHROPIC_API_KEY
+# Edita .env y pon tu GEMINI_API_KEY (gratis en aistudio.google.com/apikey)
 python tests/test_local.py
 ```
 

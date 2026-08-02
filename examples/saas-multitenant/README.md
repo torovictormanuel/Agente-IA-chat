@@ -20,7 +20,7 @@ flowchart TB
 
     subgraph Servidor["Servidor único · Vercel Serverless"]
         Router["Router webhook<br/>/webhook/{negocio_id}"]
-        Brain["brain.py<br/>Claude + tool-calling"]
+        Brain["brain.py<br/>Gemini + tool-calling"]
         Vertical["Vertical<br/>inmobiliaria (tools.py)"]
         Router --> Brain --> Vertical
     end
@@ -28,7 +28,7 @@ flowchart TB
     Meta --> Router
     Twilio --> Router
 
-    Brain --> Claude["Claude API<br/>Sonnet / Haiku"]
+    Brain --> Gemini["Gemini API<br/>Interactions API"]
     Vertical --> DB[("Neon Postgres<br/>negocio_id en cada fila")]
 ```
 
@@ -70,7 +70,7 @@ cd examples/saas-multitenant
 python -m venv .venv && source .venv/bin/activate   # o .venv\Scripts\activate en Windows
 pip install -r requirements.txt
 cp .env.example .env
-# Editá .env y poné tu ANTHROPIC_API_KEY
+# Editá .env y poné tu GEMINI_API_KEY (gratis en aistudio.google.com/apikey)
 ```
 
 Dar de alta un negocio de prueba, reutilizando el `prompts.yaml` y
@@ -109,8 +109,9 @@ multi-tenant.
 
 ## Llevarlo a producción gratis (Vercel + Neon + Meta)
 
-Esta combinación deja el proyecto corriendo sin costo de infraestructura ni
-de mensajería — lo único que vas a pagar es la API de Claude:
+Esta combinación puede dejar el proyecto corriendo en $0: Gemini tiene tier
+gratis real (sin tarjeta), y sumado a Vercel + Neon + Meta cubrís infra y
+mensajería sin costo mientras el volumen se mantenga dentro de esos límites:
 
 1. **Base de datos — [Neon](https://neon.tech) (Postgres serverless, free tier):**
    creá un proyecto, copiá la connection string **pooled** (con `-pooler` en
@@ -127,8 +128,8 @@ de mensajería — lo único que vas a pagar es la API de Claude:
 2. **Hosting — [Vercel](https://vercel.com) (free tier, Serverless Functions):**
    este proyecto ya trae `api/index.py` + `vercel.json` para deployarlo tal
    cual. Al importar el repo en Vercel, configurá el **Root Directory** en
-   `examples/saas-multitenant`, y cargá las env vars (`ANTHROPIC_API_KEY`,
-   `DATABASE_URL`, `ANTHROPIC_MODEL`).
+   `examples/saas-multitenant`, y cargá las env vars (`GEMINI_API_KEY`,
+   `DATABASE_URL`, `GEMINI_MODEL`).
 
    **Importante:** el plan Hobby (gratis) de Vercel prohíbe uso comercial en
    sus términos de servicio. Sirve mientras estás probando o no le cobrás
@@ -156,12 +157,12 @@ de mensajería — lo único que vas a pagar es la API de Claude:
    producción, y le pasás la URL `https://tu-proyecto.vercel.app/webhook/{id}`
    para que la configure como Callback URL en su app de Meta.
 
-4. **Claude API:** no tiene tier gratuito de producción. Si el proyecto es
-   una startup real con financiamiento institucional, aplicá al
-   [Anthropic Startup Program](https://www.anthropic.com/startup-program-official-terms)
-   para créditos (no toma equity, expiran a los 12 meses). Mientras tanto,
-   usá `ANTHROPIC_MODEL=claude-haiku-4-5-20251001` para desarrollo/testing
-   y reservá Sonnet (el default) para tráfico real de clientes.
+4. **Gemini API:** el tier gratis (sin tarjeta) alcanza ~10-15 solicitudes
+   por minuto y 250-1.000 por día según el modelo — suficiente para probar
+   y para varios negocios chicos. Si el volumen crece más que eso, Gemini
+   pasa a facturar por uso (mucho más barato que no tener nada gratis desde
+   el arranque). Verificá tus límites actuales en
+   [aistudio.google.com](https://aistudio.google.com), que cambian seguido.
 
 5. **Meta App Review**: si vas a dar de alta varios clientes con Meta, en
    algún momento te conviene el programa "Tech Provider" de Meta en vez de

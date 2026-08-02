@@ -33,7 +33,7 @@ Cuando generes el agente, SIEMPRE usa estas tecnologías:
 |-----------|-----------|-------|
 | Runtime | Python 3.11+ | Verificar en Fase 1 |
 | Servidor | FastAPI + Uvicorn | Webhook handler genérico |
-| IA | Anthropic Claude API | Modelo: `claude-sonnet-5` |
+| IA | Google Gemini (Interactions API) | Modelo: `gemini-2.5-flash` (configurable) |
 | WhatsApp | Meta Cloud API / Twilio | El usuario elige durante el setup |
 | Base de datos | SQLite (local) / PostgreSQL (prod) | Via SQLAlchemy |
 | Variables | python-dotenv | NUNCA hardcodear keys |
@@ -44,7 +44,7 @@ Cuando generes el agente, SIEMPRE usa estas tecnologías:
 ```
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
-anthropic>=0.40.0
+google-genai>=1.0.0
 httpx>=0.25.0
 python-dotenv>=1.0.0
 sqlalchemy>=2.0.0
@@ -69,7 +69,7 @@ agentkit/
 ├── agent/
 │   ├── __init__.py        ← Package init
 │   ├── main.py            ← FastAPI app + webhook (provider-agnostic)
-│   ├── brain.py           ← Motor genérico: Claude API + loop de tool-calling
+│   ├── brain.py           ← Motor genérico: Gemini API + loop de tool-calling
 │   ├── memory.py          ← SQLAlchemy + SQLite: historial, idempotencia, y tablas propias del rubro
 │   ├── tools.py           ← TOOLS + EJECUTAR_TOOL — lo único que cambia por rubro
 │   └── providers/
@@ -104,9 +104,9 @@ FastAPI (agent/main.py) — recibe MensajeEntrante normalizado
     ↓
 Memory (agent/memory.py) — recupera historial de esa conversación
     ↓
-Brain (agent/brain.py) — llama Claude API con: system prompt + historial + mensaje nuevo
+Brain (agent/brain.py) — llama Gemini con: system prompt + historial + mensaje nuevo
     ↓
-Claude API (claude-sonnet-5) — genera respuesta inteligente, decide si llamar tools
+Gemini (gemini-2.5-flash) — genera respuesta inteligente, decide si llamar tools
     ↓
 Tools (agent/tools.py) — si necesita hacer algo (agendar, buscar, etc.)
     ↓
@@ -228,24 +228,23 @@ PREGUNTA 7: ¿Tienes archivos con información de tu negocio?
                      "Adaptación por país" al final de la sección 3.7bis).
             Si NO → Continuamos con lo que me has contado
 
-PREGUNTA 8: ¿Tienes tu Anthropic API Key?
+PREGUNTA 8: ¿Tienes tu Google Gemini API Key?
             Si SÍ → "Compártela, la guardaré de forma segura en tu .env"
             Si NO → Guiar paso a paso:
-                     1. Ve a platform.anthropic.com
-                     2. Crea una cuenta o inicia sesión
-                     3. Ve a Settings → API Keys
-                     4. Crea una nueva key y cópiala
-                     5. La key empieza con "sk-ant-..."
+                     1. Ve a aistudio.google.com/apikey
+                     2. Inicia sesión con tu cuenta de Google
+                     3. Click en "Create API key" (no pide tarjeta)
+                     4. Copia la key generada
 
 PREGUNTA 9: ¿Qué servicio de WhatsApp quieres usar para conectar tu agente?
-            1. Meta Cloud API (RECOMENDADO) — La API oficial de WhatsApp. Las conversaciones
-               iniciadas por el cliente son gratis e ilimitadas, ideal para producción.
-               Requiere cuenta de Facebook Business verificada.
-            2. Twilio — Sandbox gratis sin verificación, muy confiable, buena documentación.
-               Pago por mensaje en producción.
+            1. Twilio (RECOMENDADO para empezar) — Sandbox gratis sin verificación,
+               muy confiable, buena documentación. Pago por mensaje en producción.
+            2. Meta Cloud API — La API oficial de WhatsApp. Las conversaciones iniciadas
+               por el cliente son gratis e ilimitadas, ideal para producción, pero
+               requiere cuenta de Facebook Business verificada.
 
-            Si solo quieres probar rápido sin verificar un Business, Twilio es más directo
-            para el sandbox inicial. Para quedarte en producción, Meta sale más barato.
+            Si solo quieres probar rápido, Twilio es lo más directo (sandbox gratis sin
+            verificación). Para quedarte en producción, Meta sale más barato.
 
 PREGUNTA 10: [Depende de la respuesta de PREGUNTA 9]
 
@@ -789,20 +788,25 @@ buscar información o ejecutar una acción, en vez de que el código intente
 adivinar la intención del usuario con reglas.
 
 ```python
-# agent/brain.py — Cerebro del agente: conexión con Claude API + tool calling
+# agent/brain.py — Cerebro del agente: conexión con Gemini + tool calling
 # Generado por AgentKit
 
 """
 Lógica de IA del agente. Lee el system prompt de prompts.yaml, ofrece al
 modelo las herramientas definidas en tools.py (TOOLS/EJECUTAR_TOOL) y
 resuelve el loop de tool-calling hasta obtener una respuesta de texto final.
+
+Usa la Interactions API de Gemini (client.interactions.create). El
+historial de conversación lo manejamos nosotros en SQLite (memory.py),
+así que cada llamada es "stateless" del lado de Google: store=False y
+reenviamos todo el historial acumulado como `input` en cada request.
 """
 
 import os
 import json
 import yaml
 import logging
-from anthropic import AsyncAnthropic
+from google import genai
 from dotenv import load_dotenv
 
 from agent.tools import TOOLS, EJECUTAR_TOOL
@@ -810,12 +814,11 @@ from agent.tools import TOOLS, EJECUTAR_TOOL
 load_dotenv()
 logger = logging.getLogger("agentkit")
 
-client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Configurable para no quemar crédito de producción durante desarrollo:
-# en local/testing conviene ANTHROPIC_MODEL=claude-haiku-4-5-20251001
-# (mucho más barato) y reservar Sonnet para tráfico real de clientes.
-MODELO = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+# Verificá el nombre exacto disponible en tu cuenta en aistudio.google.com —
+# Google libera modelos nuevos seguido y los nombres/versiones cambian.
+MODELO = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 MAX_TURNOS_TOOL = 5  # límite de idas y vueltas modelo <-> herramientas por mensaje
 
@@ -848,10 +851,38 @@ def obtener_mensaje_fallback() -> str:
     return config.get("fallback_message", "Disculpa, no entendí tu mensaje. ¿Podrías reformularlo?")
 
 
-async def _ejecutar_tool(nombre: str, tool_input: dict, telefono: str) -> str:
+def _tools_a_gemini(tools: list[dict]) -> list[dict] | None:
     """
-    Ejecuta una función de tools.py y serializa el resultado para
-    devolvérselo al modelo como tool_result.
+    Convierte TOOLS (formato name/description/input_schema) a function
+    declarations de Gemini (name/description/parameters). El JSON Schema
+    de adentro es compatible tal cual — tools.py no cambia entre LLMs.
+    """
+    if not tools:
+        return None
+    return [
+        {
+            "type": "function",
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["input_schema"],
+        }
+        for t in tools
+    ]
+
+
+def _historial_a_input(historial: list[dict]) -> list[dict]:
+    """Convierte [{"role": "user"/"assistant", "content": str}] al formato
+    de steps que espera `input` en la Interactions API."""
+    pasos = []
+    for m in historial:
+        tipo = "user_input" if m["role"] == "user" else "model_output"
+        pasos.append({"type": tipo, "content": [{"type": "text", "text": m["content"]}]})
+    return pasos
+
+
+async def _ejecutar_tool(nombre: str, argumentos: dict, telefono: str) -> dict:
+    """
+    Ejecuta una función de tools.py y retorna su resultado.
 
     `telefono` se inyecta SIEMPRE como kwarg — el modelo nunca lo ve ni
     lo puede inventar, así se evita que alguien le pida al agente actuar
@@ -859,18 +890,17 @@ async def _ejecutar_tool(nombre: str, tool_input: dict, telefono: str) -> str:
     """
     funcion = EJECUTAR_TOOL.get(nombre)
     if not funcion:
-        return json.dumps({"error": f"Herramienta '{nombre}' no existe"})
+        return {"error": f"Herramienta '{nombre}' no existe"}
     try:
-        resultado = await funcion(telefono=telefono, **tool_input)
-        return json.dumps(resultado, ensure_ascii=False, default=str)
+        return await funcion(telefono=telefono, **argumentos)
     except Exception as e:
         logger.error(f"Error ejecutando tool '{nombre}': {e}")
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+        return {"error": str(e)}
 
 
 async def generar_respuesta(mensaje: str, historial: list[dict], telefono: str) -> str:
     """
-    Genera una respuesta usando Claude API, resolviendo tool calls si el
+    Genera una respuesta usando Gemini, resolviendo tool calls si el
     modelo las solicita (buscar propiedades, agendar visitas, etc.).
 
     Args:
@@ -885,46 +915,48 @@ async def generar_respuesta(mensaje: str, historial: list[dict], telefono: str) 
         return obtener_mensaje_fallback()
 
     system_prompt = cargar_system_prompt()
-    mensajes = list(historial) + [{"role": "user", "content": mensaje}]
+    tools_gemini = _tools_a_gemini(TOOLS)
+    entrada = _historial_a_input(historial) + [
+        {"type": "user_input", "content": [{"type": "text", "text": mensaje}]}
+    ]
 
     try:
         for _ in range(MAX_TURNOS_TOOL):
-            response = await client.messages.create(
+            interaction = await client.aio.interactions.create(
                 model=MODELO,
-                max_tokens=1024,
-                system=system_prompt,
-                messages=mensajes,
-                tools=TOOLS,
+                system_instruction=system_prompt,
+                input=entrada,
+                store=False,
+                tools=tools_gemini,
             )
 
-            if response.stop_reason != "tool_use":
-                bloques_texto = [b.text for b in response.content if b.type == "text"]
-                logger.info(f"Respuesta generada ({response.usage.input_tokens} in / {response.usage.output_tokens} out)")
-                return "\n".join(bloques_texto) or obtener_mensaje_fallback()
+            if interaction.status != "requires_action":
+                logger.info(f"Respuesta generada (status={interaction.status})")
+                return interaction.output_text or obtener_mensaje_fallback()
 
-            # El modelo pidió usar una o más herramientas antes de responder
-            mensajes.append({"role": "assistant", "content": response.content})
+            # El modelo pidió usar una o más herramientas antes de responder.
+            # Reinyectamos los steps que generó (incluye los function_call)
+            # y después agregamos el resultado de cada una como input nuevo.
+            llamadas = [s for s in interaction.steps if s.type == "function_call"]
+            for step in interaction.steps:
+                entrada.append(step.model_dump())
 
-            resultados_tools = []
-            for bloque in response.content:
-                if bloque.type != "tool_use":
-                    continue
-                logger.info(f"Tool call: {bloque.name}({bloque.input})")
-                resultado = await _ejecutar_tool(bloque.name, bloque.input, telefono)
-                resultados_tools.append({
-                    "type": "tool_result",
-                    "tool_use_id": bloque.id,
-                    "content": resultado,
+            for llamada in llamadas:
+                logger.info(f"Tool call: {llamada.name}({llamada.arguments})")
+                resultado = await _ejecutar_tool(llamada.name, llamada.arguments, telefono)
+                entrada.append({
+                    "type": "function_result",
+                    "call_id": llamada.id,
+                    "name": llamada.name,
+                    "result": [{"type": "text", "text": json.dumps(resultado, ensure_ascii=False, default=str)}],
                 })
-
-            mensajes.append({"role": "user", "content": resultados_tools})
 
         # Se agotaron los turnos de tool-calling sin llegar a una respuesta final
         logger.warning("Límite de turnos de tool-calling alcanzado sin respuesta final")
         return obtener_mensaje_error()
 
     except Exception as e:
-        logger.error(f"Error Claude API: {e}")
+        logger.error(f"Error Gemini API: {e}")
         return obtener_mensaje_error()
 ```
 
@@ -1147,8 +1179,10 @@ negocios, solo sabe llamar funciones. Lo único que define QUÉ puede hacer el
 agente es este archivo, a través de un contrato fijo de dos nombres que
 `brain.py` importa directo:
 
-- **`TOOLS`** — lista de schemas JSON (formato Anthropic tools) que se le pasan
-  al modelo. El modelo decide solo, en cada turno, si necesita llamar alguna.
+- **`TOOLS`** — lista de schemas JSON (name/description/input_schema) que
+  `brain.py` convierte al formato de function declarations de Gemini antes
+  de pasárselas al modelo. El modelo decide solo, en cada turno, si necesita
+  llamar alguna.
 - **`EJECUTAR_TOOL`** — diccionario `{nombre_tool: función}` que `brain.py` usa
   para despachar la llamada real cuando el modelo pide una tool.
 
@@ -1589,11 +1623,11 @@ Claude Code genera SOLO las variables del proveedor elegido (no las de los otros
 # AgentKit — Variables de entorno
 # Generado por AgentKit — NO subir a GitHub
 
-# Anthropic API
-ANTHROPIC_API_KEY=sk-ant-...
-# Modelo: claude-sonnet-5 en producción, claude-haiku-4-5-20251001 en
-# desarrollo/testing para no quemar crédito mientras se itera
-ANTHROPIC_MODEL=claude-sonnet-5
+# Google Gemini
+GEMINI_API_KEY=...
+# Modelo: verificá el nombre exacto disponible en tu cuenta en
+# aistudio.google.com — Google libera modelos nuevos seguido
+GEMINI_MODEL=gemini-2.5-flash
 
 # Proveedor de WhatsApp
 WHATSAPP_PROVIDER=  # meta | twilio
@@ -1755,7 +1789,7 @@ Solo ejecutar si el usuario confirma que quiere hacer deploy.
 
    Paso 3: Variables de entorno
       En Railway → tu proyecto → Variables, agrega:
-      - ANTHROPIC_API_KEY = [tu key]
+      - GEMINI_API_KEY = [tu key]
       - WHATSAPP_PROVIDER = [meta | twilio]
       - PORT = 8000
       - ENVIRONMENT = production
@@ -1792,7 +1826,7 @@ Solo ejecutar si el usuario confirma que quiere hacer deploy.
 
    Lo que se construyó:
    - Servidor FastAPI con webhook de WhatsApp
-   - Cerebro con Claude AI (claude-sonnet-5) con tool-calling
+   - Cerebro con Google Gemini (gemini-2.5-flash) con tool-calling
    - Memoria de conversaciones por cliente
    - Herramientas: [LISTA DE HERRAMIENTAS]
    - System prompt personalizado para tu negocio
@@ -1855,9 +1889,9 @@ pip install -r requirements.txt
 ## 7. Variables de entorno
 
 ```env
-# Anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-sonnet-5  # claude-haiku-4-5-20251001 en dev/testing
+# Google Gemini
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash  # verificar nombre exacto en aistudio.google.com
 
 # Proveedor de WhatsApp (meta | twilio)
 WHATSAPP_PROVIDER=

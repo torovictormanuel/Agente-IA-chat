@@ -1,10 +1,17 @@
-# agent/brain.py — Cerebro del agente: conexión con Claude API + tool calling
+# agent/brain.py — Cerebro del agente: conexión con Gemini + tool calling
 # Generado por AgentKit
 
 """
 Lógica de IA del agente. Lee el system prompt de prompts.yaml, ofrece al
 modelo las herramientas definidas en tools.py (TOOLS/EJECUTAR_TOOL) y
 resuelve el loop de tool-calling hasta obtener una respuesta de texto final.
+
+Usa la Interactions API de Gemini (client.interactions.create), la forma
+recomendada actual del SDK google-genai. Como el historial de conversación
+lo manejamos nosotros mismos en SQLite (memory.py), cada llamada es
+"stateless" del lado de Google: store=False y reenviamos todo el
+historial acumulado como `input` en cada request — Google no retiene
+nada entre mensajes.
 
 Este archivo es genérico: no sabe nada de inmobiliaria específicamente.
 Para adaptar a otro rubro, se reescribe agent/tools.py, no este archivo.
@@ -14,7 +21,7 @@ import os
 import json
 import yaml
 import logging
-from anthropic import AsyncAnthropic
+from google import genai
 from dotenv import load_dotenv
 
 from agent.tools import TOOLS, EJECUTAR_TOOL
@@ -22,12 +29,11 @@ from agent.tools import TOOLS, EJECUTAR_TOOL
 load_dotenv()
 logger = logging.getLogger("agentkit")
 
-client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Configurable para no quemar crédito de producción durante desarrollo:
-# en local/testing conviene ANTHROPIC_MODEL=claude-haiku-4-5-20251001
-# (mucho más barato) y reservar Sonnet para tráfico real de clientes.
-MODELO = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+# Verificá el nombre exacto disponible en tu cuenta en aistudio.google.com —
+# Google libera modelos nuevos seguido y los nombres/versiones cambian.
+MODELO = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 MAX_TURNOS_TOOL = 5  # límite de idas y vueltas modelo <-> herramientas por mensaje
 
 
@@ -59,10 +65,42 @@ def obtener_mensaje_fallback() -> str:
     return config.get("fallback_message", "Disculpa, no entendí tu mensaje. ¿Podrías reformularlo?")
 
 
-async def _ejecutar_tool(nombre: str, tool_input: dict, telefono: str) -> str:
+def _tools_a_gemini(tools: list[dict]) -> list[dict] | None:
     """
-    Ejecuta una función de tools.py y serializa el resultado para
-    devolvérselo al modelo como tool_result.
+    Convierte TOOLS (formato name/description/input_schema, el mismo que
+    usa la API de Anthropic) a function declarations de Gemini
+    (name/description/parameters). El JSON Schema de adentro es
+    compatible tal cual — no hace falta tocar tools.py al cambiar de LLM.
+    """
+    if not tools:
+        return None
+    return [
+        {
+            "type": "function",
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["input_schema"],
+        }
+        for t in tools
+    ]
+
+
+def _historial_a_input(historial: list[dict]) -> list[dict]:
+    """
+    Convierte [{"role": "user"/"assistant", "content": str}] (formato en
+    el que memory.py guarda todo) al formato de steps que espera el
+    parámetro `input` de la Interactions API.
+    """
+    pasos = []
+    for m in historial:
+        tipo = "user_input" if m["role"] == "user" else "model_output"
+        pasos.append({"type": tipo, "content": [{"type": "text", "text": m["content"]}]})
+    return pasos
+
+
+async def _ejecutar_tool(nombre: str, argumentos: dict, telefono: str) -> dict:
+    """
+    Ejecuta una función de tools.py y retorna su resultado.
 
     `telefono` se inyecta SIEMPRE como kwarg — el modelo nunca lo ve ni
     lo puede inventar, así se evita que alguien le pida al agente actuar
@@ -70,18 +108,17 @@ async def _ejecutar_tool(nombre: str, tool_input: dict, telefono: str) -> str:
     """
     funcion = EJECUTAR_TOOL.get(nombre)
     if not funcion:
-        return json.dumps({"error": f"Herramienta '{nombre}' no existe"})
+        return {"error": f"Herramienta '{nombre}' no existe"}
     try:
-        resultado = await funcion(telefono=telefono, **tool_input)
-        return json.dumps(resultado, ensure_ascii=False, default=str)
+        return await funcion(telefono=telefono, **argumentos)
     except Exception as e:
         logger.error(f"Error ejecutando tool '{nombre}': {e}")
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+        return {"error": str(e)}
 
 
 async def generar_respuesta(mensaje: str, historial: list[dict], telefono: str) -> str:
     """
-    Genera una respuesta usando Claude API, resolviendo tool calls si el
+    Genera una respuesta usando Gemini, resolviendo tool calls si el
     modelo las solicita (buscar propiedades, agendar visitas, etc.).
 
     Args:
@@ -96,44 +133,46 @@ async def generar_respuesta(mensaje: str, historial: list[dict], telefono: str) 
         return obtener_mensaje_fallback()
 
     system_prompt = cargar_system_prompt()
-    mensajes = list(historial) + [{"role": "user", "content": mensaje}]
+    tools_gemini = _tools_a_gemini(TOOLS)
+    entrada = _historial_a_input(historial) + [
+        {"type": "user_input", "content": [{"type": "text", "text": mensaje}]}
+    ]
 
     try:
         for _ in range(MAX_TURNOS_TOOL):
-            response = await client.messages.create(
+            interaction = await client.aio.interactions.create(
                 model=MODELO,
-                max_tokens=1024,
-                system=system_prompt,
-                messages=mensajes,
-                tools=TOOLS,
+                system_instruction=system_prompt,
+                input=entrada,
+                store=False,
+                tools=tools_gemini,
             )
 
-            if response.stop_reason != "tool_use":
-                bloques_texto = [b.text for b in response.content if b.type == "text"]
-                logger.info(f"Respuesta generada ({response.usage.input_tokens} in / {response.usage.output_tokens} out)")
-                return "\n".join(bloques_texto) or obtener_mensaje_fallback()
+            if interaction.status != "requires_action":
+                logger.info(f"Respuesta generada (status={interaction.status})")
+                return interaction.output_text or obtener_mensaje_fallback()
 
-            # El modelo pidió usar una o más herramientas antes de responder
-            mensajes.append({"role": "assistant", "content": response.content})
+            # El modelo pidió usar una o más herramientas antes de responder.
+            # Reinyectamos los steps que generó (incluye los function_call)
+            # y después agregamos el resultado de cada una como input nuevo.
+            llamadas = [s for s in interaction.steps if s.type == "function_call"]
+            for step in interaction.steps:
+                entrada.append(step.model_dump())
 
-            resultados_tools = []
-            for bloque in response.content:
-                if bloque.type != "tool_use":
-                    continue
-                logger.info(f"Tool call: {bloque.name}({bloque.input})")
-                resultado = await _ejecutar_tool(bloque.name, bloque.input, telefono)
-                resultados_tools.append({
-                    "type": "tool_result",
-                    "tool_use_id": bloque.id,
-                    "content": resultado,
+            for llamada in llamadas:
+                logger.info(f"Tool call: {llamada.name}({llamada.arguments})")
+                resultado = await _ejecutar_tool(llamada.name, llamada.arguments, telefono)
+                entrada.append({
+                    "type": "function_result",
+                    "call_id": llamada.id,
+                    "name": llamada.name,
+                    "result": [{"type": "text", "text": json.dumps(resultado, ensure_ascii=False, default=str)}],
                 })
-
-            mensajes.append({"role": "user", "content": resultados_tools})
 
         # Se agotaron los turnos de tool-calling sin llegar a una respuesta final
         logger.warning("Límite de turnos de tool-calling alcanzado sin respuesta final")
         return obtener_mensaje_error()
 
     except Exception as e:
-        logger.error(f"Error Claude API: {e}")
+        logger.error(f"Error Gemini API: {e}")
         return obtener_mensaje_error()

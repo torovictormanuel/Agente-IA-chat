@@ -1,4 +1,4 @@
-# agent/brain.py — Cerebro del agente: Claude API + tool calling (multi-tenant)
+# agent/brain.py — Cerebro del agente: Gemini + tool calling (multi-tenant)
 # Generado por AgentKit
 
 """
@@ -7,34 +7,67 @@ single-tenant (que importaba TOOLS/EJECUTAR_TOOL fijos de agent.tools),
 acá TODO lo específico del negocio llega por parámetro: el system prompt,
 las tools disponibles y su dispatcher. Este archivo no sabe qué negocio
 ni qué rubro está atendiendo — eso lo resuelve main.py antes de llamarlo.
+
+Usa la Interactions API de Gemini (client.interactions.create). El
+historial de conversación lo manejamos nosotros en SQLite (memory.py),
+así que cada llamada es "stateless" del lado de Google: store=False y
+reenviamos todo el historial acumulado como `input` en cada request.
 """
 
 import os
 import json
 import logging
 from typing import Callable, Awaitable
-from anthropic import AsyncAnthropic
+from google import genai
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger("agentkit")
 
-client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Configurable para no quemar crédito de producción durante desarrollo:
-# en local/testing conviene ANTHROPIC_MODEL=claude-haiku-4-5-20251001
-# (mucho más barato) y reservar Sonnet para tráfico real de clientes.
-MODELO = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+# Verificá el nombre exacto disponible en tu cuenta en aistudio.google.com —
+# Google libera modelos nuevos seguido y los nombres/versiones cambian.
+MODELO = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 MAX_TURNOS_TOOL = 5
+
+
+def _tools_a_gemini(tools: list[dict]) -> list[dict] | None:
+    """
+    Convierte TOOLS (formato name/description/input_schema) a function
+    declarations de Gemini (name/description/parameters). El JSON Schema
+    de adentro es compatible tal cual.
+    """
+    if not tools:
+        return None
+    return [
+        {
+            "type": "function",
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["input_schema"],
+        }
+        for t in tools
+    ]
+
+
+def _historial_a_input(historial: list[dict]) -> list[dict]:
+    """Convierte [{"role": "user"/"assistant", "content": str}] al formato
+    de steps que espera `input` en la Interactions API."""
+    pasos = []
+    for m in historial:
+        tipo = "user_input" if m["role"] == "user" else "model_output"
+        pasos.append({"type": tipo, "content": [{"type": "text", "text": m["content"]}]})
+    return pasos
 
 
 async def _ejecutar_tool(
     nombre: str,
-    tool_input: dict,
+    argumentos: dict,
     telefono: str,
     negocio_id: str,
     ejecutar_tool: dict[str, Callable[..., Awaitable[dict]]],
-) -> str:
+) -> dict:
     """
     `telefono` y `negocio_id` se inyectan SIEMPRE — el modelo nunca los ve
     ni los puede falsificar. Así se garantiza que una tool jamás pueda
@@ -42,13 +75,12 @@ async def _ejecutar_tool(
     """
     funcion = ejecutar_tool.get(nombre)
     if not funcion:
-        return json.dumps({"error": f"Herramienta '{nombre}' no existe"})
+        return {"error": f"Herramienta '{nombre}' no existe"}
     try:
-        resultado = await funcion(telefono=telefono, negocio_id=negocio_id, **tool_input)
-        return json.dumps(resultado, ensure_ascii=False, default=str)
+        return await funcion(telefono=telefono, negocio_id=negocio_id, **argumentos)
     except Exception as e:
         logger.error(f"Error ejecutando tool '{nombre}' (negocio={negocio_id}): {e}")
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+        return {"error": str(e)}
 
 
 async def generar_respuesta(
@@ -69,45 +101,42 @@ async def generar_respuesta(
     if not mensaje or len(mensaje.strip()) < 2:
         return fallback_message
 
-    mensajes = list(historial) + [{"role": "user", "content": mensaje}]
+    tools_gemini = _tools_a_gemini(tools)
+    entrada = _historial_a_input(historial) + [
+        {"type": "user_input", "content": [{"type": "text", "text": mensaje}]}
+    ]
 
     try:
         for _ in range(MAX_TURNOS_TOOL):
-            response = await client.messages.create(
+            interaction = await client.aio.interactions.create(
                 model=MODELO,
-                max_tokens=1024,
-                system=system_prompt,
-                messages=mensajes,
-                tools=tools,
+                system_instruction=system_prompt,
+                input=entrada,
+                store=False,
+                tools=tools_gemini,
             )
 
-            if response.stop_reason != "tool_use":
-                bloques_texto = [b.text for b in response.content if b.type == "text"]
-                logger.info(
-                    f"Respuesta generada (negocio={negocio_id}, "
-                    f"{response.usage.input_tokens} in / {response.usage.output_tokens} out)"
-                )
-                return "\n".join(bloques_texto) or fallback_message
+            if interaction.status != "requires_action":
+                logger.info(f"Respuesta generada (negocio={negocio_id}, status={interaction.status})")
+                return interaction.output_text or fallback_message
 
-            mensajes.append({"role": "assistant", "content": response.content})
+            llamadas = [s for s in interaction.steps if s.type == "function_call"]
+            for step in interaction.steps:
+                entrada.append(step.model_dump())
 
-            resultados_tools = []
-            for bloque in response.content:
-                if bloque.type != "tool_use":
-                    continue
-                logger.info(f"Tool call (negocio={negocio_id}): {bloque.name}({bloque.input})")
-                resultado = await _ejecutar_tool(bloque.name, bloque.input, telefono, negocio_id, ejecutar_tool)
-                resultados_tools.append({
-                    "type": "tool_result",
-                    "tool_use_id": bloque.id,
-                    "content": resultado,
+            for llamada in llamadas:
+                logger.info(f"Tool call (negocio={negocio_id}): {llamada.name}({llamada.arguments})")
+                resultado = await _ejecutar_tool(llamada.name, llamada.arguments, telefono, negocio_id, ejecutar_tool)
+                entrada.append({
+                    "type": "function_result",
+                    "call_id": llamada.id,
+                    "name": llamada.name,
+                    "result": [{"type": "text", "text": json.dumps(resultado, ensure_ascii=False, default=str)}],
                 })
-
-            mensajes.append({"role": "user", "content": resultados_tools})
 
         logger.warning(f"Límite de turnos de tool-calling alcanzado (negocio={negocio_id})")
         return error_message
 
     except Exception as e:
-        logger.error(f"Error Claude API (negocio={negocio_id}): {e}")
+        logger.error(f"Error Gemini API (negocio={negocio_id}): {e}")
         return error_message
