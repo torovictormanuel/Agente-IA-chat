@@ -9,7 +9,7 @@ Funciona con cualquier proveedor (Meta, Twilio) gracias a la capa de providers.
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 
@@ -68,11 +68,37 @@ async def webhook_verificacion(request: Request):
     return {"status": "ok"}
 
 
+async def _procesar_mensaje(telefono: str, texto: str):
+    """
+    Genera y envía la respuesta a un mensaje ya validado y marcado como
+    procesado. Corre como background task — el webhook ya le respondió
+    200 OK al proveedor antes de que esto empiece, así que Gemini puede
+    tardar lo que tarde sin arriesgar que 360dialog/Meta reintenten la
+    entrega del webhook por timeout.
+    """
+    try:
+        historial = await obtener_historial(telefono)
+        respuesta = await generar_respuesta(texto, historial, telefono)
+
+        await guardar_mensaje(telefono, "user", texto)
+        await guardar_mensaje(telefono, "assistant", respuesta)
+
+        enviado = await proveedor.enviar_mensaje(telefono, respuesta)
+        if not enviado:
+            logger.error(f"No se pudo entregar la respuesta a {telefono}")
+
+        logger.info(f"Respuesta a {telefono}: {respuesta}")
+    except Exception as e:
+        logger.error(f"Error procesando mensaje de {telefono}: {e}")
+
+
 @app.post("/webhook")
-async def webhook_handler(request: Request):
+async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
     """
     Recibe mensajes de WhatsApp via el proveedor configurado.
-    Procesa el mensaje, genera respuesta con Claude y la envía de vuelta.
+    Valida y encola el procesamiento en background, respondiendo 200 de
+    inmediato — así el proveedor nunca ve el webhook "colgado" mientras
+    Gemini genera la respuesta y no reintenta la entrega del mismo mensaje.
     """
     try:
         # Verificar que el POST realmente venga del proveedor (firma HMAC).
@@ -99,22 +125,12 @@ async def webhook_handler(request: Request):
             await marcar_mensaje_procesado(msg.mensaje_id)
 
             logger.info(f"Mensaje de {msg.telefono}: {msg.texto}")
-
-            # Obtener historial ANTES de guardar el mensaje actual
-            # (brain.py agrega el mensaje actual, evitando duplicados)
-            historial = await obtener_historial(msg.telefono)
-
-            # Generar respuesta con Claude
-            respuesta = await generar_respuesta(msg.texto, historial, msg.telefono)
-
-            # Guardar mensaje del usuario Y respuesta del agente en memoria
-            await guardar_mensaje(msg.telefono, "user", msg.texto)
-            await guardar_mensaje(msg.telefono, "assistant", respuesta)
-
-            # Enviar respuesta por WhatsApp via el proveedor
-            await proveedor.enviar_mensaje(msg.telefono, respuesta)
-
-            logger.info(f"Respuesta a {msg.telefono}: {respuesta}")
+            if os.getenv("VERCEL"):
+                # Serverless: la función se congela al devolver la respuesta,
+                # así que hay que terminar de procesar antes de responder.
+                await _procesar_mensaje(msg.telefono, msg.texto)
+            else:
+                background_tasks.add_task(_procesar_mensaje, msg.telefono, msg.texto)
 
         return {"status": "ok"}
 

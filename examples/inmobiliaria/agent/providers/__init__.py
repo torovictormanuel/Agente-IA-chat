@@ -14,7 +14,7 @@ def obtener_proveedor() -> ProveedorWhatsApp:
     proveedor = os.getenv("WHATSAPP_PROVIDER", "").lower()
 
     if not proveedor:
-        raise ValueError("WHATSAPP_PROVIDER no configurado en .env. Usa: meta o twilio")
+        raise ValueError("WHATSAPP_PROVIDER no configurado en .env. Usa: meta, twilio o dialog360")
 
     if proveedor == "meta":
         from agent.providers.meta import ProveedorMeta
@@ -22,5 +22,8 @@ def obtener_proveedor() -> ProveedorWhatsApp:
     elif proveedor == "twilio":
         from agent.providers.twilio import ProveedorTwilio
         return ProveedorTwilio()
+    elif proveedor == "dialog360":
+        from agent.providers.dialog360 import ProveedorDialog360
+        return ProveedorDialog360()
     else:
-        raise ValueError(f"Proveedor no soportado: {proveedor}. Usa: meta o twilio")
+        raise ValueError(f"Proveedor no soportado: {proveedor}. Usa: meta, twilio o dialog360")

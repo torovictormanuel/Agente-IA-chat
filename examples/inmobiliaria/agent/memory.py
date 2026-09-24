@@ -24,7 +24,13 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./agentkit.db")
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+# El pooler de Supabase (pgbouncer, modo transaction) no soporta prepared
+# statements: sin desactivar el cache de asyncpg, las queries fallan al azar.
+_connect_args = {}
+if DATABASE_URL.startswith("postgresql+asyncpg://"):
+    _connect_args = {"statement_cache_size": 0, "prepared_statement_cache_size": 0}
+
+engine = create_async_engine(DATABASE_URL, echo=False, connect_args=_connect_args, pool_pre_ping=True)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

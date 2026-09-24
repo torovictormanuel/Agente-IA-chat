@@ -22,6 +22,7 @@ import json
 import yaml
 import logging
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 from agent.tools import TOOLS, EJECUTAR_TOOL
@@ -29,7 +30,23 @@ from agent.tools import TOOLS, EJECUTAR_TOOL
 load_dotenv()
 logger = logging.getLogger("agentkit")
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+# El SDK de Gemini reintenta automáticamente en errores 5xx con backoff
+# exponencial — por default hasta 5 intentos con hasta 60s de espera entre
+# cada uno, lo que puede sumar varios MINUTOS de espera para el usuario de
+# WhatsApp ante un simple error transitorio de Google. Lo acotamos a algo
+# razonable para un chat en tiempo real: 2 intentos, timeout corto por
+# request y backoff corto entre reintentos.
+client = genai.Client(
+    api_key=os.getenv("GEMINI_API_KEY"),
+    http_options=types.HttpOptions(
+        timeout=20_000,  # 20s máximo por request antes de abortar
+        retry_options=types.HttpRetryOptions(
+            attempts=2,       # 1 reintento como máximo
+            initial_delay=1,
+            max_delay=4,
+        ),
+    ),
+)
 
 # Verificá el nombre exacto disponible en tu cuenta en aistudio.google.com —
 # Google libera modelos nuevos seguido y los nombres/versiones cambian.
